@@ -27,6 +27,12 @@ export AGENT_AUDIO_PORT="${AUDIOSOCKET_PORT:-9092}"
 export INTERNAL_TOKEN="${INTERNAL_TOKEN:-}"
 export OWNER_PHONE="${OWNER_PHONE:-}"
 
+# ';' inicia comentário nos arquivos .conf do Asterisk: escapa para não truncar senhas.
+SEMI_ESC='\;'
+SIP_PASSWORD="${SIP_PASSWORD//;/$SEMI_ESC}"
+AMI_SECRET="${AMI_SECRET//;/$SEMI_ESC}"
+export SIP_PASSWORD AMI_SECRET
+
 if [[ ! "${INTERNAL_TOKEN}" =~ ^[A-Za-z0-9_-]*$ ]]; then
     echo "ERRO: INTERNAL_TOKEN deve conter apenas letras, números, _ ou -" >&2
     exit 1

@@ -6,7 +6,7 @@ import logging
 
 import uvicorn
 
-from .api import create_app
+from .api import RedactTokenFilter, create_app
 from .asterisk import AMIClient
 from .audiosocket import AudioSocketServer
 from .calls import CallManager
@@ -19,6 +19,10 @@ async def amain() -> None:
     settings = Settings.from_env()
     logging.basicConfig(level=settings.log_level, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     log = logging.getLogger("controle")
+    logging.getLogger("uvicorn.access").addFilter(RedactTokenFilter())
+    if not settings.api_token and settings.http_host not in ("127.0.0.1", "::1", "localhost"):
+        log.error("API_TOKEN vazio com HTTP_HOST=%s: qualquer pessoa na rede pode ver as ligações e "
+                  "DISCAR em seu nome. Defina API_TOKEN no .env.", settings.http_host)
 
     db = Database(settings.db_path)
     stt, llm, tts = make_stt(settings), make_llm(settings), make_tts(settings)

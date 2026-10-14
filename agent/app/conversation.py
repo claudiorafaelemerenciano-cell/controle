@@ -79,6 +79,7 @@ class CallSession:
         self._done = asyncio.Event()
         self._end_requested = False
         self._transfer_requested = False
+        self._closing = False  # despedida/transferência em curso: fala do interlocutor não interrompe
         self._last_speech = 0.0
         self._silence_prompted = False
         self.end_reason = ""
@@ -104,6 +105,8 @@ class CallSession:
             asyncio.create_task(self._stt_loop(), name="stt"),
             asyncio.create_task(self._watchdog(), name="watchdog"),
         ]
+        for t in tasks:
+            t.add_done_callback(self._on_task_done)
         self._start_opening()
         try:
             await self._done.wait()
@@ -116,6 +119,17 @@ class CallSession:
                 await self.stt_stream.close()
             self.db.finish_call(self.call.id, "completed")
             log.info("Chamada %s encerrada (%s)", self.call.id, self.end_reason or "fim")
+
+    def _on_task_done(self, task: asyncio.Task) -> None:
+        """Se uma tarefa essencial morrer sozinha, encerra a chamada em vez de ficar muda/surda."""
+        if task.cancelled() or self._done.is_set():
+            return
+        exc = task.exception()
+        if exc is not None:
+            log.error("[%s] tarefa %s falhou: %r", self.call.id, task.get_name(), exc)
+            self._finish(f"erro interno ({task.get_name()})")
+        elif task.get_name() in ("reader", "stt"):
+            self._finish("STT/áudio encerrado" if task.get_name() == "stt" else "interlocutor desligou")
 
     def _finish(self, reason: str) -> None:
         if not self.end_reason:
@@ -168,6 +182,9 @@ class CallSession:
         text = text.strip()
         if not text:
             return
+        if self._closing:
+            log.info("[%s] fala ignorada durante o encerramento: %s", self.call.id, text)
+            return
         await self._barge_in()
         log.info("[%s] interlocutor: %s", self.call.id, text)
         self.db.add_turn(self.call.id, "caller", text)
@@ -187,6 +204,8 @@ class CallSession:
 
     # ------------------------------------------------------------------ barge-in
     async def _barge_in(self) -> None:
+        if self._closing:
+            return
         if self._response and not self._response.done():
             log.info("[%s] barge-in: interrompendo a fala", self.call.id)
             await self._cancel_response()
@@ -336,11 +355,13 @@ class CallSession:
             return result("Recado anotado com sucesso.")
         if tu.name == "encerrar_ligacao":
             self._end_requested = True
+            self._closing = True
             return result("A ligação será encerrada após sua última fala.")
         if tu.name == "transferir":
             if not self.transfer_available:
                 return result("Transferência indisponível. Ofereça anotar um recado.", error=True)
             self._transfer_requested = True
+            self._closing = True
             return result("Transferindo após sua última fala.")
         return result(f"Ferramenta desconhecida: {tu.name}", error=True)
 
@@ -356,6 +377,7 @@ class CallSession:
             self.end_reason = "transferida"
         else:
             self._transfer_requested = False
+            self._closing = False
             text = "Não consegui transferir agora. Posso anotar um recado?"
             self.messages.append({"role": "user", "content": "(A transferência falhou.)"})
             self.messages.append({"role": "assistant", "content": text})
@@ -390,6 +412,7 @@ class CallSession:
                     return
 
     async def _final_words(self, text: str, reason: str) -> None:
+        self._closing = True
         await self._cancel_response()
         self._response = asyncio.create_task(self._speak(text))
         with contextlib.suppress(asyncio.CancelledError, Exception):

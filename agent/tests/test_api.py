@@ -178,3 +178,40 @@ def test_serves_dashboard(settings, db, manager, tmp_path):
     with TestClient(create_app(settings, db, manager)) as c:
         assert "painel" in c.get("/").text
         assert c.get("/api/status").status_code == 200
+
+
+def test_validation_error_is_ptbr_string_detail(client):
+    r = client.post("/api/calls", json={"to": "abc", "purpose": "oi"})
+    assert r.status_code == 422
+    detail = r.json()["detail"]
+    assert isinstance(detail, str) and "número inválido" in detail and "Value error" not in detail
+    r = client.post("/api/calls", json={})
+    assert r.status_code == 422 and "campo obrigatório" in r.json()["detail"]
+
+
+def test_originate_failure_does_not_leak_exception_text(settings, db):
+    m = CallManager(settings, db, FakeSTT(), FakeLLM(), FakeTTS(), FakeAMI(fail=True))
+    with TestClient(create_app(settings, db, m)) as c:
+        r = c.post("/api/calls", json={"to": "5511988887777", "purpose": "oi"})
+    assert r.status_code == 502
+    assert isinstance(r.json()["detail"], str) and "AMI" in r.json()["detail"]
+    assert "fora do ar" not in r.json()["detail"]
+
+
+def test_non_ascii_tokens_do_not_500(settings, db, manager):
+    settings.api_token = "segredo"
+    with TestClient(create_app(settings, db, manager)) as c:
+        r = c.get("/api/status", headers={"Authorization": "Bearer sécret".encode("latin-1")})
+        assert r.status_code == 401
+        assert c.get("/internal/inbound?token=s%C3%A9cret").status_code == 403
+        assert c.get("/api/status", headers={"Authorization": "Bearer segredo"}).status_code == 200
+
+
+def test_access_log_redacts_internal_token():
+    import logging
+    from app.api import RedactTokenFilter
+
+    rec = logging.LogRecord("uvicorn.access", 20, "", 0, '%s - "%s %s HTTP/%s" %d',
+                            ("127.0.0.1:1", "GET", "/internal/inbound?token=abc123&from=1", "1.1", 200), None)
+    RedactTokenFilter().filter(rec)
+    assert "abc123" not in rec.getMessage() and "token=***&from=1" in rec.getMessage()

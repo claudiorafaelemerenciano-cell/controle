@@ -213,3 +213,43 @@ async def test_manager_unknown_uuid_creates_inbound(settings, db):
     await asyncio.wait_for(task, 5)
     row = db.get_call_row(conn.call_id)
     assert row["direction"] == "inbound" and row["status"] == "completed"
+
+
+async def test_caller_speech_during_goodbye_does_not_cancel_hangup(settings, db):
+    llm = FakeLLM([["Tudo certo, até logo!", ToolUse("t1", "encerrar_ligacao", {"motivo": "fim"})]])
+    tts = FakeTTS(ms_per_char=30)
+    session, conn, stt = make_session(settings, db, llm, tts)
+    session.frame_interval = 0.002
+    run = asyncio.create_task(session.run())
+    await wait_until(lambda: stt.streams)
+    await wait_until(lambda: session._response.done() and not session.player.is_playing)
+    stt.streams[0].push(STTEvent("final", "Obrigado, era só isso."))
+    await wait_until(lambda: session._closing)
+    # o interlocutor fala por cima da despedida: não pode cancelar o encerramento nem gerar novo turno
+    stt.streams[0].push(STTEvent("partial", "tchau"))
+    stt.streams[0].push(STTEvent("final", "tchau"))
+    await asyncio.wait_for(run, 8)
+    assert conn.hangup_sent
+    assert len(llm.calls) == 1
+    assert "caller" not in [t["role"] for t in db.get_call(session.call.id)["transcript"]][2:]
+
+
+async def test_stt_stream_ending_finishes_call(settings, db):
+    session, conn, stt = make_session(settings, db, FakeLLM())
+    run = asyncio.create_task(session.run())
+    await wait_until(lambda: stt.streams)
+    await stt.streams[0].close()  # ex.: Deepgram derrubou o WebSocket
+    await asyncio.wait_for(run, 3)
+    assert db.get_call(session.call.id)["status"] == "completed"
+
+
+async def test_reader_crash_finishes_call(settings, db):
+    session, conn, stt = make_session(settings, db, FakeLLM())
+
+    async def boom():
+        raise RuntimeError("socket quebrou")
+
+    conn.read_message = boom
+    run = asyncio.create_task(session.run())
+    await asyncio.wait_for(run, 3)
+    assert db.get_call(session.call.id)["status"] == "completed"
