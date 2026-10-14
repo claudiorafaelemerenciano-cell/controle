@@ -1,0 +1,14 @@
+; AMI: usado pelo agente para originar ligações, transferir e ver o status do
+; registro SIP. Escuta SOMENTE em 127.0.0.1 — nunca exponha a porta 5038.
+[general]
+enabled = yes
+port = 5038
+bindaddr = 127.0.0.1
+displayconnects = no
+
+[${AMI_USERNAME}]
+secret = ${AMI_SECRET}
+deny = 0.0.0.0/0.0.0.0
+permit = 127.0.0.1/255.255.255.255
+read = system,call,originate
+write = system,call,originate

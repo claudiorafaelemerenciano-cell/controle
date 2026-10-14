@@ -1,0 +1,67 @@
+; =============================================================================
+; PJSIP — tronco com o provedor SIP (registro de saída + endpoint).
+; Gerado a partir de templates/pjsip.conf.tmpl pelo entrypoint (envsubst).
+; =============================================================================
+
+[global]
+type = global
+user_agent = Controle-Secretaria
+endpoint_identifier_order = ip,username
+
+[transport-udp]
+type = transport
+protocol = udp
+bind = 0.0.0.0:${SIP_LOCAL_PORT}
+${NAT_CONFIG}
+
+; --- autenticação no provedor ---
+[provider-auth]
+type = auth
+auth_type = userpass
+username = ${SIP_AUTH_USERNAME}
+password = ${SIP_PASSWORD}
+
+; --- registro de saída: faz o provedor entregar as chamadas do DID aqui ---
+[provider-reg]
+type = registration
+transport = transport-udp
+outbound_auth = provider-auth
+server_uri = sip:${SIP_SERVER}:${SIP_PORT}
+client_uri = sip:${SIP_USERNAME}@${SIP_SERVER}:${SIP_PORT}
+contact_user = ${SIP_USERNAME}
+retry_interval = 60
+forbidden_retry_interval = 300
+max_retries = 10000
+expiration = 300
+line = yes
+endpoint = provider
+
+[provider-aor]
+type = aor
+contact = sip:${SIP_SERVER}:${SIP_PORT}
+qualify_frequency = 60
+
+[provider]
+type = endpoint
+transport = transport-udp
+context = from-provider
+disallow = all
+allow = ulaw,alaw
+outbound_auth = provider-auth
+aors = provider-aor
+from_user = ${SIP_USERNAME}
+from_domain = ${SIP_SERVER}
+callerid = ${SIP_CALLER_ID}
+direct_media = no
+rtp_symmetric = yes
+force_rport = yes
+rewrite_contact = yes
+dtmf_mode = rfc4733
+send_pai = no
+trust_id_inbound = yes
+
+; Identifica chamadas vindas do IP do provedor (resolvido no carregamento).
+[provider-identify]
+type = identify
+endpoint = provider
+match = ${SIP_SERVER}

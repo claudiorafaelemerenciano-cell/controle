@@ -1,0 +1,7 @@
+; Faixa de portas RTP (UDP). Precisa estar liberada no firewall e, se houver NAT,
+; encaminhada para este host. ~4 portas por chamada simultânea.
+[general]
+rtpstart = ${RTP_START}
+rtpend = ${RTP_END}
+strictrtp = yes
+icesupport = no
